@@ -3,6 +3,42 @@ import time
 from datetime import datetime
 from playwright.sync_api import sync_playwright, Cookie
 
+def check_already_extended_error(page):
+    """
+    检查页面是否显示已经续期过的错误提示
+    """
+    try:
+        # 检查常见的错误提示选择器
+        error_selectors = [
+            '.alert.alert-danger',
+            '.error-message', 
+            '.form-error',
+            '[role="alert"]',
+            '.notification.is-danger',
+            '.toast-error',
+            'div:has-text("already extended")',
+            'div:has-text("once per day")',
+            'div:has-text("You have already extended")'
+        ]
+        
+        for selector in error_selectors:
+            error_element = page.query_selector(selector)
+            if error_element:
+                error_text = error_element.inner_text().strip().lower()
+                # 检查是否包含已续期相关的关键词
+                if any(keyword in error_text for keyword in [
+                    'already extended', 
+                    'once per day', 
+                    'you have already', 
+                    '已经续期',
+                    '每天只能'
+                ]):
+                    return True
+        
+        return False
+    except Exception:
+        return False
+
 def login_to_panel(page, remember_web_cookie, login_email, login_password):
     """
     登录到 GTX Gaming 控制面板
@@ -110,25 +146,69 @@ def extend_server_time(page, server_url, server_name=""):
             # 检查按钮是否存在且可见
             button_element = page.query_selector(add_button_selector)
             if not button_element:
-                print(f"ℹ️ 服务器 {server_display_name} 已经续期过了")
-                return True, "already_extended"
+                # 检查是否有已续期的错误提示
+                if check_already_extended_error(page):
+                    print(f"ℹ️ 服务器 {server_display_name} 已经续期过了")
+                    return True, "already_extended"
+                else:
+                    print(f"❌ 服务器 {server_display_name} 未找到续期按钮")
+                    return False, "failed"
             
             # 检查按钮是否可点击
             if button_element.is_disabled():
-                print(f"ℹ️ 服务器 {server_display_name} 已经续期过了")
+                print(f"ℹ️ 服务器 {server_display_name} 续期按钮已禁用（可能已续期）")
                 return True, "already_extended"
             
             # 尝试点击按钮
             page.wait_for_selector(add_button_selector, state='visible', timeout=10000)
-            page.click(add_button_selector)
-            print(f"✅ 服务器 {server_display_name} 成功延长时间")
-            time.sleep(3)  # 稍作等待
-            return True, "success"
+            
+            # 设置网络响应监听
+            responses = []
+            def handle_response(response):
+                if "/api/client/freeservers/" in response.url or "renew" in response.url.lower():
+                    responses.append(response)
+            
+            page.on("response", handle_response)
+            
+            try:
+                # 点击续期按钮
+                page.click(add_button_selector)
+                
+                # 等待页面响应和更新
+                time.sleep(5)
+                
+                # 检查网络响应
+                if responses:
+                    for response in responses:
+                        if response.status == 400:
+                            print(f"ℹ️ 服务器 {server_display_name} 已经续期过了 (HTTP 400)")
+                            return True, "already_extended"
+                        elif response.status == 200:
+                            print(f"✅ 服务器 {server_display_name} 成功延长时间 (HTTP 200)")
+                            return True, "success"
+                        else:
+                            print(f"❌ 服务器 {server_display_name} 续期请求返回 HTTP {response.status}")
+                
+                # 检查页面是否有错误提示
+                if check_already_extended_error(page):
+                    print(f"ℹ️ 服务器 {server_display_name} 已经续期过了 (页面提示)")
+                    return True, "already_extended"
+                
+                # 如果没有明确的错误提示，假设成功
+                print(f"✅ 服务器 {server_display_name} 续期操作完成")
+                return True, "success"
+                
+            finally:
+                # 移除响应监听器
+                page.remove_listener("response", handle_response)
             
         except Exception as e:
-            # 可能是按钮不存在或已经续期过了
-            print(f"ℹ️ 服务器 {server_display_name} 已经续期过了")
-            return True, "already_extended"
+            print(f"❌ 处理服务器 {server_display_name} 时发生异常: {e}")
+            # 检查是否有已续期的错误提示
+            if check_already_extended_error(page):
+                print(f"ℹ️ 服务器 {server_display_name} 已经续期过了")
+                return True, "already_extended"
+            return False, "failed"
             
     except Exception as e:
         print(f"❌ 处理服务器 {server_display_name} 时发生错误: {e}")
