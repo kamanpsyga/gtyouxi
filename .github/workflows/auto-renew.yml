@@ -40,6 +40,18 @@ jobs:
         SERVER_LIST: ${{ secrets.SERVER_LIST }}
       run: python main.py
 
+    - name: Commit and push README.md
+      run: |
+        git config --global user.name 'GitHub Actions'
+        git config --global user.email 'actions@github.com'
+        git add README.md
+        if git diff --staged --quiet; then
+          echo "No changes to README.md"
+        else
+          git commit -m "Update README.md with latest run status"
+          git push
+        fi
+
     - name: Delete old workflow runs
       uses: MajorScruffy/delete-old-workflow-runs@v0.3.0
       env:
