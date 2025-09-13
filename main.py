@@ -1,5 +1,6 @@
 import os
 import time
+from datetime import datetime
 from playwright.sync_api import sync_playwright, Cookie
 
 def login_to_panel(page, remember_web_cookie, login_email, login_password):
@@ -85,9 +86,11 @@ def login_to_panel(page, remember_web_cookie, login_email, login_password):
 def extend_server_time(page, server_url, server_name=""):
     """
     为指定服务器延长时间
+    返回元组: (是否成功, 状态描述)
     """
     try:
         server_display_name = server_name if server_name else server_url.split('/')[-1]
+        server_id = server_url.split('/')[-1]
         print(f"\n=== 正在处理服务器: {server_display_name} ===")
         
         # 导航到服务器页面
@@ -97,27 +100,71 @@ def extend_server_time(page, server_url, server_name=""):
         # 检查是否成功到达服务器页面
         if "login" in page.url or "auth" in page.url:
             print(f"访问服务器 {server_display_name} 失败，会话可能已过期。")
-            return False
+            return False, "failed"
             
         # 查找并点击 "EXTEND 72 HOUR(S)" 按钮
         add_button_selector = 'button:has-text("EXTEND 72 HOUR(S)")'
         print(f"正在查找 'EXTEND 72 HOUR(S)' 按钮...")
         
         try:
-            page.wait_for_selector(add_button_selector, state='visible', timeout=30000)
+            # 检查按钮是否存在且可见
+            button_element = page.query_selector(add_button_selector)
+            if not button_element:
+                print(f"ℹ️ 服务器 {server_display_name} 已经续期过了")
+                return True, "already_extended"
+            
+            # 检查按钮是否可点击
+            if button_element.is_disabled():
+                print(f"ℹ️ 服务器 {server_display_name} 已经续期过了")
+                return True, "already_extended"
+            
+            # 尝试点击按钮
+            page.wait_for_selector(add_button_selector, state='visible', timeout=10000)
             page.click(add_button_selector)
             print(f"✅ 服务器 {server_display_name} 成功延长时间")
             time.sleep(3)  # 稍作等待
-            return True
+            return True, "success"
+            
         except Exception as e:
-            print(f"❌ 服务器 {server_display_name} 延长时间失败: 未找到按钮或点击失败 - {e}")
-            page.screenshot(path=f"extend_button_not_found_{server_display_name}.png")
-            return False
+            # 可能是按钮不存在或已经续期过了
+            print(f"ℹ️ 服务器 {server_display_name} 已经续期过了")
+            return True, "already_extended"
             
     except Exception as e:
         print(f"❌ 处理服务器 {server_display_name} 时发生错误: {e}")
         page.screenshot(path=f"server_error_{server_display_name}.png")
-        return False
+        return False, "failed"
+
+def generate_readme(server_results, timestamp):
+    """
+    生成 README.md 文件
+    server_results: 服务器处理结果列表 [(server_id, status), ...]
+    timestamp: 运行时间戳
+    """
+    readme_content = f"# GTX Gaming 自动续期状态\n\n"
+    readme_content += f"**最后运行时间**: `{timestamp}`\n\n"
+    readme_content += f"**运行结果**: <br>\n"
+    
+    for server_id, status in server_results:
+        if status == "success":
+            icon = "✅"
+            message = "续期成功"
+        elif status == "already_extended":
+            icon = "ℹ️"
+            message = "已经续期过了"
+        else:  # failed
+            icon = "❌"
+            message = "续期失败"
+        
+        readme_content += f"{icon} `{server_id}` {message}\n\n"
+    
+    # 写入 README.md 文件
+    try:
+        with open('README.md', 'w', encoding='utf-8') as f:
+            f.write(readme_content)
+        print(f"✅ README.md 文件已生成")
+    except Exception as e:
+        print(f"❌ 生成 README.md 文件失败: {e}")
 
 def add_server_time(server_configs=None):
     """
@@ -125,6 +172,10 @@ def add_server_time(server_configs=None):
     server_configs: 服务器配置列表，每个配置包含 url 和可选的 name
     如果为空，则使用环境变量中的配置
     """
+    # 获取当前时间戳
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    server_results = []
+    
     # 获取环境变量
     remember_web_cookie = os.environ.get('REMEMBER_WEB_COOKIE')
     login_email = os.environ.get('LOGIN_EMAIL')
@@ -155,6 +206,13 @@ def add_server_time(server_configs=None):
             print("正在登录 GTX Gaming 控制面板...")
             if not login_to_panel(page, remember_web_cookie, login_email, login_password):
                 print("登录失败，无法继续执行。")
+                # 即使登录失败也要生成README
+                for config in server_configs:
+                    server_url = config.get('url', '')
+                    if server_url:
+                        server_id = server_url.split('/')[-1]
+                        server_results.append((server_id, "failed"))
+                generate_readme(server_results, current_time)
                 return False
             
             print("登录成功！开始处理服务器列表...")
@@ -170,8 +228,12 @@ def add_server_time(server_configs=None):
                 if not server_url:
                     print(f"跳过无效的服务器配置: {config}")
                     continue
-                    
-                if extend_server_time(page, server_url, server_name):
+                
+                server_id = server_url.split('/')[-1]
+                is_success, status = extend_server_time(page, server_url, server_name)
+                server_results.append((server_id, status))
+                
+                if is_success:
                     success_count += 1
                 
                 # 在处理下一个服务器前稍作等待
@@ -182,11 +244,22 @@ def add_server_time(server_configs=None):
             print(f"成功: {success_count} 个服务器")
             print(f"失败: {total_count - success_count} 个服务器")
             
+            # 生成 README.md 文件
+            generate_readme(server_results, current_time)
+            
             return success_count > 0
 
         except Exception as e:
             print(f"执行过程中发生未知错误: {e}")
             page.screenshot(path="general_error.png")
+            # 即使出错也要生成README
+            for config in server_configs:
+                server_url = config.get('url', '')
+                if server_url:
+                    server_id = server_url.split('/')[-1]
+                    if not any(result[0] == server_id for result in server_results):
+                        server_results.append((server_id, "failed"))
+            generate_readme(server_results, current_time)
             return False
         finally:
             browser.close()
