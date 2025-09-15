@@ -236,7 +236,10 @@ def generate_readme(server_results, timestamp):
             icon = "❌"
             message = "续期失败"
         
-        readme_content += f"{icon} `{server_id}` {message}\n\n"
+        readme_content += f"{icon} `{server_id}` {message}<br>\n"
+    
+    # 添加结尾空行
+    readme_content += "\n"
     
     # 写入 README.md 文件
     try:
