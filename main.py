@@ -407,7 +407,7 @@ class GTXGamingRenewer:
         readme_content = f"**最后运行时间**: `{beijing_timestamp}`\n\n"
         readme_content += f"**运行结果**: <br>\n"
         
-        for result in self.server_results:
+        for i, result in enumerate(self.server_results):
             server_id, status, old_expire, new_expire, server_name = result
             
             # 状态图标和文本
@@ -431,6 +431,10 @@ class GTXGamingRenewer:
                 readme_content += f"🕛️旧到期时间：`{old_expire}`<br>"
             if new_expire and new_expire != old_expire:
                 readme_content += f"🕡️新到期时间：`{new_expire}`<br>"
+            
+            # 添加服务器之间的空行分隔（最后一个服务器除外）
+            if i < len(self.server_results) - 1:
+                readme_content += "\n"
             
             readme_content += "\n"
         
