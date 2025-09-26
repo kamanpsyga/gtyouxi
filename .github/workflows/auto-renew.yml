@@ -1,10 +1,10 @@
-name: Server Auto Extend
+name: GTX Gaming Server Auto Extend
 
 on:
   schedule:
-    # 每天 UTC 时间 00:00 运行一次 (例如，北京时间早上 8 点)
+    # 每天 UTC 时间 04:00 运行一次 (北京时间中午 12 点)
     # 你可以根据需要调整这个时间
-    - cron: '0 0 * * *'
+    - cron: '0 4 * * *'
   workflow_dispatch: # 允许手动触发 workflow
 
 jobs:
@@ -32,25 +32,85 @@ jobs:
     - name: Run Python script
       env:
         # 确保在 GitHub Secrets 中设置这些变量
+        # 登录方式1: Cookie登录 (推荐)
         REMEMBER_WEB_COOKIE: ${{ secrets.REMEMBER_WEB_COOKIE }}
+        # 登录方式2: 邮箱密码登录 (备用)
         LOGIN_EMAIL: ${{ secrets.LOGIN_EMAIL }}
         LOGIN_PASSWORD: ${{ secrets.LOGIN_PASSWORD }}
-        # 多服务器配置 - 选择其中一种方式设置
-        SERVER_URLS: ${{ secrets.SERVER_URLS }}
+        # 服务器配置 - JSON 格式 (必需)
+        # 格式: [{"url": "https://gamepanel2.gtxgaming.co.uk/server/xxx", "name": "服务器名称"}]
         SERVER_LIST: ${{ secrets.SERVER_LIST }}
       run: python main.py
 
     - name: Commit and push README.md
       run: |
-        git config --global user.name 'GitHub Actions'
-        git config --global user.email 'actions@github.com'
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # 添加README文件
         git add README.md
-        if git diff --staged --quiet; then
-          echo "No changes to README.md"
+        
+        # 检查是否有变化需要提交
+        if git diff --cached --quiet; then
+          echo "README文件无变化，无需提交"
         else
-          git commit -m "Update README.md with latest run status"
-          git push
+          git commit -m "📝 更新运行状态: $(date +'%Y-%m-%d %H:%M:%S')"
+          git push origin HEAD:main
         fi
+
+    - name: Upload screenshots
+      if: always()  # 无论成功或失败都上传截图
+      uses: actions/upload-artifact@v4
+      with:
+        name: screenshots-${{ github.run_number }}
+        path: "*.png"
+        retention-days: 7
+        if-no-files-found: ignore
+
+    - name: Send Telegram notification
+      if: always() && env.TELEGRAM_BOT_TOKEN != '' && env.TELEGRAM_CHAT_ID != ''
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        # 直接从README.md提取运行结果部分
+        if [ -f "README.md" ]; then
+          # 提取运行结果部分（从"运行结果:"开始到文件末尾）
+          RESULT_CONTENT=$(sed -n '/\*\*运行结果\*\*:/,$p' README.md | tail -n +2)
+          
+          # 将HTML格式转换为纯文本格式
+          RESULT_CONTENT=$(echo "$RESULT_CONTENT" | sed 's/<br>/\n/g' | sed 's/`//g')
+          
+          # 如果提取失败，使用备用方法
+          if [ -z "$RESULT_CONTENT" ]; then
+            RESULT_CONTENT="❌ 无法提取运行结果"
+          fi
+        else
+          RESULT_CONTENT="❌ README.md文件不存在"
+        fi
+        
+        # 构建通知消息
+        MESSAGE="🚀GTX Gaming续期通知
+        📅执行时间：$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')
+        
+        ${RESULT_CONTENT}
+        
+        📋 详细信息：
+        🔗 [查看运行日志](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+        📸 [下载截图](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts)"
+        
+        # 发送Telegram消息
+        curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+          -d chat_id="${TELEGRAM_CHAT_ID}" \
+          -d text="${MESSAGE}" \
+          -d parse_mode="Markdown"
+
+    - name: Telegram通知跳过提示
+      if: always() && (env.TELEGRAM_BOT_TOKEN == '' || env.TELEGRAM_CHAT_ID == '')
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: echo "未配置Telegram变量，跳过通知"
 
     - name: Delete old workflow runs
       uses: MajorScruffy/delete-old-workflow-runs@v0.3.0
