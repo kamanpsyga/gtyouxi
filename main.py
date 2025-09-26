@@ -428,15 +428,18 @@ class GTXGamingRenewer:
             
             # 添加到期时间信息
             if old_expire:
-                readme_content += f"🕛️旧到期时间：`{old_expire}`<br>"
-            if new_expire and new_expire != old_expire:
-                readme_content += f"🕡️新到期时间：`{new_expire}`<br>"
+                readme_content += f"🕛️旧到期时间：`{old_expire}`"
+                # 如果有新到期时间，则添加<br>
+                if new_expire and new_expire != old_expire:
+                    readme_content += "<br>"
             
-            # 添加服务器之间的空行分隔（最后一个服务器除外）
+            if new_expire and new_expire != old_expire:
+                readme_content += f"🕡️新到期时间：`{new_expire}`"
+            
+            # 添加服务器之间的空行分隔
+            readme_content += "\n"
             if i < len(self.server_results) - 1:
                 readme_content += "\n"
-            
-            readme_content += "\n"
         
         # 写入文件
         try:
